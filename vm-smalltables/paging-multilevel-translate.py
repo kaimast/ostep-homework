@@ -1,20 +1,11 @@
-#! /usr/bin/env python
+#! /usr/bin/env python3
 
 ''' Simulates a simple multi (two) level page table '''
 
-#pylint: disable=too-many-branches
+#pylint: disable=too-many-branches,invalid-name
 
-from __future__ import print_function
 from optparse import OptionParser
 import random
-
-# to make Python2 and Python3 act the same -- how dumb
-def random_seed(seed):
-    ''' Apply the supplied seed '''
-    try:
-        random.seed(seed, version=1)
-    except:
-        random.seed(seed)
 
 def to_bits(num, count, shift=0):
     ''' Convert the number to a bit string '''
@@ -56,12 +47,6 @@ def convert(size):
     else:
         nsize = int(size)
     return nsize
-
-def roundup(size):
-    value = 1.0
-    while value < size:
-        value = value * 2.0
-    return value
 
 class OS:
     def __init__(self):
@@ -434,7 +419,7 @@ def main():
     print('ARG num',  options.num)
     print('')
 
-    random_seed(options.seed)
+    random.seed(options.seed, version=1)
 
     # do the work now
     os = OS()
@@ -484,7 +469,6 @@ def main():
             else:
                 print('      --> Fault (page table entry not valid)')
             print(' ')
-
 
 if __name__ == "__main__":
     main()
