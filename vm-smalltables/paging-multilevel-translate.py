@@ -31,23 +31,6 @@ def generate_bitmask(num_bits, shift=0):
         res |= 1 << (idx + shift)
     return res
 
-def convert(size):
-    ''' Convert a user-supplied size into bytes. E.g. 1k to 1024 '''
-    length = len(size)
-    lastchar = size[length-1]
-    if lastchar in ['k', 'K']:
-        m = 1024
-        nsize = int(size[0:length-1]) * m
-    elif lastchar in ['m', 'M']:
-        m = 1024*1024
-        nsize = int(size[0:length-1]) * m
-    elif lastchar in ['g', 'G']:
-        m = 1024*1024*1024
-        nsize = int(size[0:length-1]) * m
-    else:
-        nsize = int(size)
-    return nsize
-
 class OS:
     ''' The memory management logic '''
 
