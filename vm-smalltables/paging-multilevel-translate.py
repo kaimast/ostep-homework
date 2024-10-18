@@ -2,7 +2,7 @@
 
 ''' Simulates a simple multi (two) level page table '''
 
-#pylint: disable=too-many-branches,invalid-name
+#pylint: disable=too-many-branches,too-many-instance-attributes,invalid-name,too-many-public-methods,too-many-locals
 
 from optparse import OptionParser
 import random
@@ -49,56 +49,60 @@ def convert(size):
     return nsize
 
 class OS:
+    ''' The memory management logic '''
+
     def __init__(self):
+        # 128 byte pages
+        self.page_bits         = 5
+        self.page_size         = pow(2, self.page_bits)
+
         # 4k phys memory (128 pages)
-        self.page_size  = 32
-        self.physPages = 128
-        self.physMem   = self.page_size * self.physPages
-        self.vaPages   = 1024
-        self.vaSize    = self.page_size * self.vaPages
-        self.pteSize   = 1
-        self.page_bits  = 5
-        self.vaddr_len = 16
+        self.num_phys_pages    = 128
+        self.phys_mem_size     = self.page_size * self.num_phys_pages
+        self.vpn_size          = 10
+        self.num_virtual_pages = pow(2, self.vpn_size)
+        self.virt_mem_size     = self.page_size * self.num_virtual_pages
+        self.pte_size          = 1
 
         # Data that the OS tracks
-        self.used_pages      = []
+        self.used_pages       = []
         self.used_pages_count = 0
-        self.max_page_count   = int(self.physMem / self.page_size)
+        self.max_page_count   = int(self.phys_mem_size / self.page_size)
 
         # no pages used (yet)
         self.used_pages= [0 for _ in range(0, self.max_page_count)]
 
         # set contents of memory to 0, too
-        self.memory = [0 for _ in range(0, self.physMem)]
+        self.memory = [0 for _ in range(0, self.phys_mem_size)]
 
         # associative array of pdbr's (indexed by PID)
         self.pdbr = {}
 
-        self.PDE_SHIFT = 10
-        self.PDE_BITS = 5
-        self.PDE_MASK = generate_bitmask(self.PDE_BITS, shift=self.PDE_SHIFT)
+        self.pte_shift = self.page_bits
+        self.pte_bits  = 5
+        self.pte_mask  = generate_bitmask(self.pte_bits, shift=self.pte_shift)
 
-        self.PTE_BITS  = 5
-        self.PTE_SHIFT = 5
-        self.PTE_MASK  = generate_bitmask(self.PTE_BITS, shift=self.PTE_SHIFT)
+        self.pde_shift = self.pte_shift+self.pte_bits
+        self.pde_bits  = self.vpn_size - self.pte_bits
+        self.pde_mask  = generate_bitmask(self.pde_bits, shift=self.pde_shift)
 
-        self.VPN_MASK    = self.PDE_MASK | self.PTE_MASK
-        self.VPN_SHIFT   = self.PTE_SHIFT
+        self.vpn_mask  = self.pde_mask | self.pte_mask
+        self.vpn_shift = self.pte_shift
 
-        self.OFFSET_MASK = generate_bitmask(self.page_bits)
-        
-        self.vaddr_len = self.PDE_BITS + self.PTE_BITS + self.page_bits
+        self.offset_mask = generate_bitmask(self.page_bits)
+
+        self.vaddr_len = self.pde_bits + self.pte_bits + self.page_bits
 
     def print_bits(self, addr):
         ''' Prints every bit of an address '''
 
-        pde = (addr & self.PDE_MASK) >> self.PDE_SHIFT
-        pde_str = to_bits(pde, self.PDE_BITS, shift=self.PDE_SHIFT)
+        pde = (addr & self.pde_mask) >> self.pde_shift
+        pde_str = to_bits(pde, self.pde_bits, shift=self.pde_shift)
 
-        pte = (addr & self.PTE_MASK) >> self.PTE_SHIFT
-        pte_str = to_bits(pte, self.PTE_BITS, shift=self.PTE_SHIFT)
+        pte = (addr & self.pte_mask) >> self.pte_shift
+        pte_str = to_bits(pte, self.pte_bits, shift=self.pte_shift)
 
-        offset = addr & self.OFFSET_MASK
+        offset = addr & self.offset_mask
         offset_str = to_bits(offset, self.page_bits)
 
         padding = "   "
@@ -161,7 +165,7 @@ class OS:
 
     def get_pte_bits(self, virtual_addr):
         ''' Get the offset within the page table page for an address '''
-        return (virtual_addr & self.PTE_MASK) >> self.PTE_SHIFT
+        return (virtual_addr & self.pte_mask) >> self.pte_shift
 
     def get_pagetable_entry(self, virtual_addr, pte_page, print_stuff=False):
         ''' Get contents of a specific PTE '''
@@ -182,7 +186,7 @@ class OS:
         ''' Show contents of the page directory for the specified process '''
 
         page_dir = self.pdbr[pid]
-        num_entries = pow(2, self.PDE_BITS)
+        num_entries = pow(2, self.pde_bits)
 
         if highlight:
             assert highlight >= 0
@@ -210,7 +214,7 @@ class OS:
     def print_pagetable_page(self, pte_page, highlight=None):
         ''' Print the contents of a page a of the page table '''
 
-        num_entries = pow(2, self.PTE_BITS)
+        num_entries = pow(2, self.pte_bits)
 
         if highlight:
             assert highlight >= 0
@@ -247,7 +251,7 @@ class OS:
 
         if valid:
             print('')
-            offset = vaddr & self.OFFSET_MASK
+            offset = vaddr & self.offset_mask
             self.print_physical_page(pfn, highlight=offset)
         print('')
 
@@ -261,7 +265,7 @@ class OS:
 
     def memory_dump(self):
         ''' Show content of the entire physical memory '''
-        for page_num in range(int(self.physMem / self.page_size)):
+        for page_num in range(int(self.phys_mem_size / self.page_size)):
             content = [f'{value:02x}' for value in self.fetch_physical_page(page_num)]
             print(f'Page {page_num:3d}: '+' '.join(content))
 
@@ -280,7 +284,7 @@ class OS:
 
     def get_pde_bits(self, virtual_addr):
         ''' Get the offset within the PDE for an address '''
-        return (virtual_addr & self.PDE_MASK) >> self.PDE_SHIFT
+        return (virtual_addr & self.pde_mask) >> self.pde_shift
 
     def get_pagedir_entry(self, pid, virtual_addr, print_stuff=False):
         ''' Get the page directory entry corresponding to the virtual address '''
@@ -297,13 +301,17 @@ class OS:
                   f'(valid {valid}, pfn 0x{pt_ptr:02x} [decimal {pt_ptr}]')
         return (valid, pt_ptr, pde_addr)
 
-    def setPageTableEntry(self, pte_addr, physicalPage):
+    def set_pagetable_entry(self, pte_addr, physicalPage):
+        ''' Store a new page table entry '''
         self.memory[pte_addr] = 0x80 | physicalPage
 
-    def setPageDirEntry(self, pde_addr, physicalPage):
+    def set_pagedir_entry(self, pde_addr, physicalPage):
+        ''' Store a new page directory entry '''
         self.memory[pde_addr] = 0x80 | physicalPage
 
-    def allocVirtualPage(self, pid, virtualPage, physicalPage):
+    def alloc_virtual_page(self, pid, virtualPage, physicalPage):
+        ''' Map a page the in the process' memory to a physical page '''
+
         # make it into a virtual address, as everything uses this (and not VPN)
         virtual_addr = virtualPage << self.page_bits
         (valid, pt_ptr, pde_addr) = self.get_pagedir_entry(pid, virtual_addr, False)
@@ -311,7 +319,7 @@ class OS:
             # must allocate a page of the page table now, and have the PD point to it
             assert pt_ptr == 127
             pte_page = self.find_free()
-            self.setPageDirEntry(pde_addr, pte_page)
+            self.set_pagedir_entry(pde_addr, pte_page)
             self.init_pagetable_page(pte_page)
         else:
             # otherwise, just extract page number of page table page
@@ -320,7 +328,7 @@ class OS:
         (valid, pfn, pte_addr) = self.get_pagetable_entry(virtual_addr, pte_page, False)
         assert valid == 0
         assert pfn == 127
-        self.setPageTableEntry(pte_addr, physicalPage)
+        self.set_pagetable_entry(pte_addr, physicalPage)
 
     def translate(self, pid, virtual_addr):
         '''
@@ -332,7 +340,7 @@ class OS:
             pte_page = pt_ptr
             (valid, pfn, _pte_addr) = self.get_pagetable_entry(virtual_addr, pte_page, True)
             if valid == 1:
-                offset = virtual_addr & self.OFFSET_MASK
+                offset = virtual_addr & self.offset_mask
                 paddr  = (pfn << self.page_bits) | offset
         		# print('     --> pfn: %02x  offset: %x' % (pfn, offset))
                 return paddr
@@ -340,11 +348,15 @@ class OS:
             return -2
         return -1
 
-    def fillPage(self, which_page):
+    def fill_page(self, which_page):
+        ''' Fill a phyiscal page with random data '''
+
         for j in range(0, self.page_size):
             self.memory[(which_page * self.page_size) + j] = int(random.random() * 31)
 
     def allocate_process(self, pid, numPages):
+        ''' Set up the virutal memory for a process '''
+
         # need a PDBR: find one somewhere in memory
         pageDir = self.find_free()
         # print('**ALLOCATE** page dir', pageDir)
@@ -352,25 +364,26 @@ class OS:
         self.init_page_directory(pageDir)
 
         used = {}
-        for vp in range(0, self.vaPages):
+        for vp in range(0, self.num_virtual_pages):
             used[vp] = 0
         allocatedVPs = []
 
         for vp in range(0, numPages):
-            vp = int(random.random() * self.vaPages)
+            vp = int(random.random() * self.num_virtual_pages)
             while used[vp] == 1:
-                vp = int(random.random() * self.vaPages)
+                vp = int(random.random() * self.num_virtual_pages)
             assert used[vp] == 0
             used[vp] = 1
             allocatedVPs.append(vp)
             pp = self.find_free()
             # print('**ALLOCATE** page', pp)
             # print('  trying to map vp:%08x to pp:%08x' % (vp, pp))
-            self.allocVirtualPage(pid, vp, pp)
-            self.fillPage(pp)
+            self.alloc_virtual_page(pid, vp, pp)
+            self.fill_page(pp)
         return allocatedVPs
 
-    def getPDBR(self, pid):
+    def get_pdbr(self, pid):
+        ''' Get the page directory base register for the specified process '''
         return self.pdbr[pid]
 
     def get_value(self, addr):
@@ -441,7 +454,7 @@ def main():
     os.memory_dump()
 
     print('')
-    print(f'PDBR: {os.getPDBR(1)} (decimal) '
+    print(f'PDBR: {os.get_pdbr(1)} (decimal) '
            '[This means the page directory is held in this page]')
     print('')
 
