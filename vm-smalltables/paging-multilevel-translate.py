@@ -89,10 +89,6 @@ class OS:
         # associative array of pdbr's (indexed by PID)
         self.pdbr = {}
 
-        self.UNUSED_SHIFT = 15
-        self.UNUSED_BITS = 1
-        self.UNUSED_MASK = generate_bitmask(self.UNUSED_BITS, shift=self.UNUSED_SHIFT)
-
         self.PDE_SHIFT = 10
         self.PDE_BITS = 5
         self.PDE_MASK = generate_bitmask(self.PDE_BITS, shift=self.PDE_SHIFT)
@@ -105,15 +101,12 @@ class OS:
         self.VPN_SHIFT   = self.PTE_SHIFT
 
         self.OFFSET_MASK = generate_bitmask(self.page_bits)
-
-        assert (self.UNUSED_BITS + self.PDE_BITS + self.PTE_BITS + self.page_bits) == self.vaddr_len
+        
+        self.vaddr_len = self.PDE_BITS + self.PTE_BITS + self.page_bits
 
     def print_bits(self, addr):
         ''' Prints every bit of an address '''
 
-        unused = (addr & self.UNUSED_MASK) >> self.UNUSED_SHIFT
-        unused_str = to_bits(unused, self.UNUSED_BITS,
-            shift=self.UNUSED_SHIFT)
         pde = (addr & self.PDE_MASK) >> self.PDE_SHIFT
         pde_str = to_bits(pde, self.PDE_BITS, shift=self.PDE_SHIFT)
 
@@ -123,11 +116,12 @@ class OS:
         offset = addr & self.OFFSET_MASK
         offset_str = to_bits(offset, self.page_bits)
 
-        print(f"Bits: {unused_str}|{pde_str}|{pte_str}|{offset_str}|")
+        padding = "   "
 
-        hexvals = " Hex: "
-        for (value, bitstr) in [(unused, unused_str), (pde, pde_str),
-                             (pte, pte_str), (offset, offset_str)]:
+        print(padding +  f"        Bits: |{pde_str}|{pte_str}|{offset_str}|")
+
+        hexvals = padding+" Hexadecimal: |"
+        for (value, bitstr) in [(pde, pde_str), (pte, pte_str), (offset, offset_str)]:
             nbits = len(bitstr)
             hexval = f'{value:x}'
             assert len(hexval) <= len(bitstr)
@@ -138,18 +132,16 @@ class OS:
             hexvals += ' ' * (nbits - len(hexval)) + hexval + '|'
         print(hexvals)
 
-        decvals = " Dec: "
-        for (value, bitstr) in [(unused, unused_str), (pde, pde_str),
-                             (pte, pte_str), (offset, offset_str)]:
+        decvals = padding+"     Decimal: |"
+        for (value, bitstr) in [(pde, pde_str), (pte, pte_str), (offset, offset_str)]:
             nbits = len(bitstr)
             decval = str(value)
             assert len(decval) <= len(bitstr)
             decvals += ' ' * (nbits - len(decval)) + decval + '|'
         print(decvals)
 
-        labels = "      "
-        for (name, bits) in [("-", unused_str), ("PDE", pde_str),
-                             ("PTE", pte_str), ("offset", offset_str)]:
+        labels  = padding+"              |"
+        for (name, bits) in [("PDE", pde_str), ("PTE", pte_str), ("offset", offset_str)]:
             nbits = len(bits) # The lengths fo the string rep, not the number of actual bits
             if len(name) <= nbits:
                 label = name + ' ' * (nbits - len(name))
@@ -291,7 +283,7 @@ class OS:
     def print_physical_page(self, pfn, highlight=None):
         ''' Print the contents physical page '''
 
-        print(f"# Page @ {pfn}")
+        print(f"# Phyiscal Page @ {pfn}")
 
         content = [f'{value:02x}' for value in self.fetch_physical_page(pfn)]
         print(''.join(content))
@@ -429,7 +421,11 @@ def main():
                       action='store_true', default=False, dest='show_page_dir')
     parser.add_option('--show-page-table', action='store', type=int, default=None,
                       dest='show_page_table',
-                      help='Show contents of pagatable page with the specified index')
+                      help='Show contents of pagatable page with the specified PFN')
+    parser.add_option('--show-physical-page', action='store', type=int, default=None,
+                      dest='show_physical_page',
+                      help='Show contents of a physical page with the specified PFN')
+
 
     (options, _args) = parser.parse_args()
 
@@ -452,6 +448,11 @@ def main():
         os.print_pagetable_page(options.show_page_table)
         return
 
+    if options.show_physical_page:
+        os.print_physical_page(options.show_physical_page)
+        return
+
+
     os.memory_dump()
 
     print('')
@@ -465,20 +466,15 @@ def main():
         else:
             vaddr = (used[i] << 5) | int(random.random() * 32)
 
-        if options.solve or options.show_bits:
-            print(f'## Virtual Address 0x{vaddr:04x}')
-        else:
-            print(f'Virtual Address 0x{vaddr:04x}')
-
-        if options.show_bits:
-            os.print_bits(vaddr)
+        print(f'Virtual Address: 0x{vaddr:04x}')
 
         if options.walk:
             os.walk(vaddr)
 
+        if options.show_bits or options.solve:
+            os.print_bits(vaddr)
 
         if options.solve:
-            print('# Solution:')
             r = os.translate(1, vaddr)
             if r > -1:
                 print(f'      --> Translates to Physical Address 0x{r:03x} '
