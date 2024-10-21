@@ -35,22 +35,26 @@ class OS:
     ''' The memory management logic '''
 
     def __init__(self):
-        # 128 byte pages
+        # 32 byte pages
         self.page_bits         = 5
         self.page_size         = pow(2, self.page_bits)
+        assert self.page_size == 32
 
         # 4k phys memory (128 pages)
         self.num_phys_pages    = 128
         self.phys_mem_size     = self.page_size * self.num_phys_pages
         self.vpn_size          = 10
+
+        # 32kb virtual memory (1024 pages)
         self.num_virtual_pages = pow(2, self.vpn_size)
+        assert self.num_virtual_pages == 1024
         self.virt_mem_size     = self.page_size * self.num_virtual_pages
         self.pte_size          = 1
 
         # Data that the OS tracks
         self.used_pages       = []
         self.used_pages_count = 0
-        self.max_page_count   = int(self.phys_mem_size / self.page_size)
+        self.max_page_count   = self.num_phys_pages
 
         # no pages used (yet)
         self.used_pages= [0 for _ in range(0, self.max_page_count)]
@@ -65,16 +69,13 @@ class OS:
         self.pte_bits  = 5
         self.pte_mask  = generate_bitmask(self.pte_bits, shift=self.pte_shift)
 
-        self.pde_shift = self.pte_shift+self.pte_bits
+        self.pde_shift = self.pte_shift + self.pte_bits
         self.pde_bits  = self.vpn_size - self.pte_bits
         self.pde_mask  = generate_bitmask(self.pde_bits, shift=self.pde_shift)
 
-        self.vpn_mask  = self.pde_mask | self.pte_mask
-        self.vpn_shift = self.pte_shift
-
         self.offset_mask = generate_bitmask(self.page_bits)
-
         self.vaddr_len = self.pde_bits + self.pte_bits + self.page_bits
+        assert self.vaddr_len == 15
 
     def print_bits(self, addr):
         ''' Prints every bit of an address '''
@@ -154,14 +155,19 @@ class OS:
         ''' Get contents of a specific PTE '''
 
         pte_bits = self.get_pte_bits(virtual_addr)
-        pte_addr = (pte_page << self.page_bits) | pte_bits
+        return self.get_pagetable_entry_at_index(pte_page, pte_bits, print_stuff)
+
+    def get_pagetable_entry_at_index(self, pte_page, index, print_stuff=False):
+        ''' Get the PTE at a specific location within a pagetable page '''
+
+        pte_addr = (pte_page << self.page_bits) |index
         pte     = self.memory[pte_addr]
         valid   = (pte & 0x80) >> 7
         pfn     = pte & 0x7f
 
         if print_stuff is True:
-            print(f'    --> PTE contents:0x{pte:x} '
-                  f'(valid {valid}, PFN 0x{pfn:02x} [decimal {pfn}])')
+            print(f'    --> PTE contents: 0x{pte:x} '
+                  f'(index {index}, valid {valid}, PFN 0x{pfn:02x} [decimal {pfn}])')
 
         return (valid, pfn, pte_addr)
 
@@ -175,14 +181,14 @@ class OS:
             assert highlight >= 0
             assert highlight < num_entries
 
-        print("# Page Directory")
+        print("== Page Directory ==")
         for idx in range(num_entries):
             pde_addr = (page_dir << self.page_bits) | idx
             pde      = self.memory[pde_addr]
             valid    = (pde & 0x80) >> 7
             pt_ptr   = pde & 0x7f
 
-            line = f'{idx:002}: '
+            line = f'{idx:002}: 0x{pde:02x} => '
 
             if valid:
                 line += f'0x{pt_ptr:02x} [decimal {pt_ptr}]'
@@ -203,13 +209,13 @@ class OS:
             assert highlight >= 0
             assert highlight < num_entries
 
-        print(f"# Pagetable @ {pte_page}")
+        print(f"== Pagetable @ {pte_page} ==")
         for idx in range(num_entries):
-            _pte, valid, pfn = self.get_pagetable_entry(pte_page, idx)
+            valid, pfn, pte_addr = self.get_pagetable_entry_at_index(pte_page, idx)
 
-            line = f'{idx:002}: '
+            line = f'{idx:02}: 0x{self.memory[pte_addr]:02x} => '
 
-            if valid:
+            if valid > 0:
                 line += f'0x{pfn:02x} [decimal {pfn}]'
             else:
                 line += '- invalid -'
@@ -222,17 +228,17 @@ class OS:
     def walk(self, vaddr):
         ''' Prints the page table path for an address '''
 
-        (valid, pt_ptr, _) = self.get_pagedir_entry(1, vaddr)
+        (valid, pt_pfn, _) = self.get_pagedir_entry(1, vaddr)
         pdir_idx = self.get_pde_bits(vaddr)
         self.print_page_directory(1, highlight=pdir_idx)
 
-        if valid:
+        if valid == 1:
             print('')
-            (valid, pfn, _) = self.get_pagetable_entry(vaddr, pt_ptr)
+            (valid, pfn, _) = self.get_pagetable_entry(vaddr, pt_pfn)
             pte_bits = self.get_pte_bits(vaddr)
-            self.print_pagetable_page(pdir_idx, highlight=pte_bits)
+            self.print_pagetable_page(pt_pfn, highlight=pte_bits)
 
-        if valid:
+        if valid == 1:
             print('')
             offset = vaddr & self.offset_mask
             self.print_physical_page(pfn, highlight=offset)
@@ -255,7 +261,7 @@ class OS:
     def print_physical_page(self, pfn, highlight=None):
         ''' Print the contents physical page '''
 
-        print(f"# Phyiscal Page @ {pfn}")
+        print(f"== Phyiscal Page @ {pfn} ==")
 
         content = [f'{value:02x}' for value in self.fetch_physical_page(pfn)]
         print(''.join(content))
@@ -280,8 +286,9 @@ class OS:
         pt_ptr   = pde & 0x7f
 
         if print_stuff is True:
-            print(f'  --> PDE contents: Ox{pde:x} '
-                  f'(valid {valid}, pfn 0x{pt_ptr:02x} [decimal {pt_ptr}]')
+            print(f'  --> PDE contents: 0x{pde:x} '
+                  f'(index {pde_bits}, valid {valid}, pfn 0x{pt_ptr:02x} [decimal {pt_ptr}]')
+
         return (valid, pt_ptr, pde_addr)
 
     def set_pagetable_entry(self, pte_addr, physicalPage):
@@ -447,13 +454,13 @@ def main():
         else:
             vaddr = (used[i] << 5) | int(random.random() * 32)
 
-        print(f'Virtual Address: 0x{vaddr:04x}')
-
-        if options.walk:
-            os.walk(vaddr)
+        print(f'= Virtual Address: 0x{vaddr:04x} =')
 
         if options.show_bits or options.solve:
             os.print_bits(vaddr)
+
+        if options.walk:
+            os.walk(vaddr)
 
         if options.solve:
             r = os.translate(1, vaddr)
